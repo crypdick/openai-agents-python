@@ -57,7 +57,7 @@ class _RayToolCallPayload:
 
 if ray:
 
-    @ray.remote  # type: ignore[misc]
+    @ray.remote
     def _ray_execute_function_tool(payload: _RayToolCallPayload) -> Any:
         """Execute an async function tool in a Ray worker."""
         setup_distributed_tracing()
@@ -89,9 +89,7 @@ class RayToolInvocationBackend(ToolInvocationBackend):
         )
 
         try:
-            object_ref = _ray_execute_function_tool.options(  # type: ignore[name-defined]
-                **self._ray_remote_args
-            ).remote(payload)
+            object_ref = _ray_execute_function_tool.options(**self._ray_remote_args).remote(payload)
         except TypeError as exc:
             # Ray throws TypeError when serialization fails during task submission
             logger.warning(

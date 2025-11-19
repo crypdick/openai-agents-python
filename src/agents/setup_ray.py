@@ -7,7 +7,7 @@ try:
 
     from agents.tracing.ray_exporter import TRACING_AGGREGATOR_NAME, TracingAggregator
 except ImportError:
-    ray = None
+    ray = None  # type: ignore[assignment]
 
 _ray_initialized = False
 
@@ -27,7 +27,7 @@ def ensure_ray_initialized() -> Any:
         _ray_initialized = True
 
         # Ensure the tracing aggregator is running if Ray is available
-        aggregator = TracingAggregator.options(
+        aggregator = TracingAggregator.options(  # type: ignore[attr-defined]
             name=TRACING_AGGREGATOR_NAME, get_if_exists=True
         ).remote()
         return aggregator

@@ -78,7 +78,11 @@ from .stream_events import (
 )
 from .tool import Tool
 from .tool_guardrails import ToolInputGuardrailResult, ToolOutputGuardrailResult
-from .tool_invocation_backend import RayToolInvocationBackend, ToolInvocationBackend
+from .tool_invocation_backend import (
+    AsyncToolInvocationBackend,
+    RayToolInvocationBackend,
+    ToolInvocationBackend,
+)
 from .tracing import Span, SpanError, agent_span, get_current_trace, guardrail_span, trace
 from .tracing.span_data import AgentSpanData
 from .usage import Usage
@@ -188,7 +192,7 @@ CallModelInputFilter = Callable[[CallModelData[Any]], MaybeAwaitable[ModelInputD
 
 if ray:
 
-    @ray.remote  # type: ignore[misc]
+    @ray.remote
     def _ray_execute_input_guardrail(
         guardrail: InputGuardrail[Any],
         agent: Agent[Any],
@@ -203,9 +207,9 @@ if ray:
         ):
             return await guardrail.run(agent, input_data, context)
 
-        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))
+        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))  # type: ignore[no-any-return]
 
-    @ray.remote  # type: ignore[misc]
+    @ray.remote
     def _ray_execute_output_guardrail(
         guardrail: OutputGuardrail[Any],
         agent: Agent[Any],
@@ -220,7 +224,7 @@ if ray:
         ):
             return await guardrail.run(context, agent, output)
 
-        return asyncio.run(_execute_output_guardrail_impl(guardrail, agent, output, context))
+        return asyncio.run(_execute_output_guardrail_impl(guardrail, agent, output, context))  # type: ignore[no-any-return]
 
 
 async def _ray_wait_for_guardrails(
@@ -233,6 +237,16 @@ async def _ray_wait_for_guardrails(
 async def _ray_get_guardrail_result(ref: ray.ObjectRef[Any]) -> Any:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: ray.get(ref))
+
+
+def _use_ray() -> bool:
+    return ray is not None and os.environ.get("RAY_BACKEND") == "1"
+
+
+def _default_tool_invocation_backend() -> ToolInvocationBackend:
+    if _use_ray():
+        return RayToolInvocationBackend()
+    return AsyncToolInvocationBackend()
 
 
 @dataclass
@@ -325,8 +339,11 @@ class RunConfig:
     For example, you can use this to add a system prompt to the input.
     """
 
-    tool_invocation_backend: ToolInvocationBackend = field(default_factory=RayToolInvocationBackend)
-    """Backend used to execute function tools. Ray is the default implementation."""
+    tool_invocation_backend: ToolInvocationBackend = field(
+        default_factory=_default_tool_invocation_backend
+    )
+    """Backend used to execute function tools. To enable Ray, set the RAY_BACKEND=1 environment variable.
+    """
 
 
 class RunOptions(TypedDict, Generic[TContext]):
@@ -1747,7 +1764,7 @@ class AgentRunner:
         if not guardrails:
             return []
 
-        if ray:
+        if _use_ray():
             try:
                 return await cls._run_input_guardrails_with_ray(
                     agent=agent,
@@ -1893,7 +1910,7 @@ class AgentRunner:
     ) -> list[InputGuardrailResult]:
         return await cls._run_guardrails_with_ray_generic(
             guardrails=guardrails,  # type: ignore[arg-type]
-            remote_func=_ray_execute_input_guardrail,  # type: ignore[name-defined]
+            remote_func=_ray_execute_input_guardrail,
             agent=agent,
             data=input,
             context=context,
@@ -1912,7 +1929,7 @@ class AgentRunner:
         if not guardrails:
             return []
 
-        if ray:
+        if _use_ray():
             try:
                 return await cls._run_output_guardrails_with_ray(
                     guardrails=guardrails,
@@ -1965,7 +1982,7 @@ class AgentRunner:
     ) -> list[OutputGuardrailResult]:
         return await cls._run_guardrails_with_ray_generic(
             guardrails=guardrails,  # type: ignore[arg-type]
-            remote_func=_ray_execute_output_guardrail,  # type: ignore[name-defined]
+            remote_func=_ray_execute_output_guardrail,
             agent=agent,
             data=output,
             context=context,

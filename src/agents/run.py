@@ -342,7 +342,7 @@ class RunConfig:
     tool_invocation_backend: ToolInvocationBackend = field(
         default_factory=_default_tool_invocation_backend
     )
-    """Backend used to execute function tools. To enable Ray, set the RAY_BACKEND=1 environment variable.
+    """Backend used to execute function tools. To enable Ray, set RAY_BACKEND=1.
     """
 
 

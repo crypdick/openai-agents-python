@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +19,40 @@ try:  # pragma: no cover - ray may not be installed in some environments
     from agents.tracing.ray_exporter import setup_distributed_tracing
 except Exception:  # pragma: no cover - gracefully handle missing ray
     ray = None  # type: ignore[assignment]
+
+
+@dataclass
+class RayToolError:
+    """
+    Formats errors from Ray tool executions in the format the library expects.
+    """
+
+    error_type: str
+    error_message: str
+    tool_name: str
+    original_traceback: str | None = None
+
+    def to_exception(self) -> Exception:
+        """Convert back to an exception for re-raising in the main process."""
+        # Try to recreate the original exception type if it's a builtin
+        import builtins
+
+        exc_class = getattr(builtins, self.error_type, None)
+        if exc_class and issubclass(exc_class, Exception):
+            return exc_class(self.error_message)  # type: ignore[no-any-return]
+
+        # Try to import from agents.exceptions
+        try:
+            from . import exceptions
+
+            exc_class = getattr(exceptions, self.error_type, None)
+            if exc_class and issubclass(exc_class, Exception):
+                return exc_class(self.error_message)  # type: ignore[no-any-return]
+        except (ImportError, AttributeError):
+            pass
+
+        # Fall back to a generic Exception with type info
+        return Exception(f"{self.error_type}: {self.error_message}")
 
 
 class ToolInvocationBackend(ABC):
@@ -51,8 +86,21 @@ class _RayToolCallPayload:
     tool_context: ToolContext[Any]
     tool_arguments: str
 
-    async def run(self) -> Any:
-        return await self.func_tool.on_invoke_tool(self.tool_context, self.tool_arguments)
+    async def run(self) -> Any | RayToolError:
+        """
+        Execute the tool and return result or RayToolError on exception.
+        We return errors instead of raising to avoid Ray's verbose stack traces.
+        """
+        try:
+            return await self.func_tool.on_invoke_tool(self.tool_context, self.tool_arguments)
+        except Exception as e:
+            # Capture the clean error information before Ray wraps it
+            return RayToolError(
+                error_type=type(e).__name__,
+                error_message=str(e),
+                tool_name=self.func_tool.name,
+                original_traceback=traceback.format_exc(),
+            )
 
 
 if ray:
@@ -106,7 +154,13 @@ class RayToolInvocationBackend(ToolInvocationBackend):
     async def _ray_get_async(self, object_ref: ray.ObjectRef[Any]) -> Any:
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(None, lambda: ray.get(object_ref))
+            result = await loop.run_in_executor(None, lambda: ray.get(object_ref))
+
+            if isinstance(result, RayToolError):
+                # Convert back to exception and raise with clean message
+                raise result.to_exception()
+
+            return result
         except Exception:
             logger.exception("Ray task execution failed; reraising.")
             raise

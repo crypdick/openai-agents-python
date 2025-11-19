@@ -86,7 +86,7 @@ from .util import _coro, _error_tracing
 from .util._types import MaybeAwaitable
 
 if ray:
-    from src.agents.setup_ray import ensure_ray_initialized
+    from agents.setup_ray import ensure_ray_initialized
 
     _ray_aggregator = ensure_ray_initialized()
 

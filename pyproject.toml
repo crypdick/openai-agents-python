@@ -14,7 +14,6 @@ dependencies = [
     "requests>=2.0, <3",
     "types-requests>=2.0, <3",
     "mcp>=1.11.0, <2; python_version >= '3.10'",
-    "ray>=2.51.1",
 ]
 classifiers = [
     "Typing :: Typed",
@@ -44,6 +43,9 @@ sqlalchemy = ["SQLAlchemy>=2.0", "asyncpg>=0.29.0"]
 encrypt = ["cryptography>=45.0, <46"]
 redis = ["redis>=7"]
 dapr = ["dapr>=1.16.0", "grpcio>=1.60.0"]
+ray = [
+    "ray>=2.51.1",
+]
 
 [dependency-groups]
 dev = [

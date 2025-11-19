@@ -32,7 +32,13 @@ def ensure_openai_api_key():
 # Disable Ray backend by default for all tests unless explicitly enabled
 @pytest.fixture(autouse=True)
 def disable_ray_backend(monkeypatch):
-    monkeypatch.delenv("RAY_BACKEND", raising=False)
+    import os
+
+    # If TEST_RAY_BACKEND=1, enable Ray backend for all tests
+    if os.environ.get("TEST_RAY_BACKEND") == "1":
+        monkeypatch.setenv("RAY_BACKEND", "1")
+    else:
+        monkeypatch.delenv("RAY_BACKEND", raising=False)
 
 
 # This fixture will run before each test

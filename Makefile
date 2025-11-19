@@ -23,6 +23,10 @@ mypy:
 tests: 
 	uv run pytest 
 
+.PHONY: tests-ray
+tests-ray:
+	TEST_RAY_BACKEND=1 uv run pytest
+
 .PHONY: coverage
 coverage:
 	

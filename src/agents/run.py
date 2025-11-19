@@ -23,6 +23,8 @@ from openai.types.responses.response_prompt_param import (
 from openai.types.responses.response_reasoning_item import ResponseReasoningItem
 from typing_extensions import NotRequired, TypedDict, Unpack
 
+from agents.setup_ray import ensure_ray_initialized as _ensure_ray_initialized, use_ray as _use_ray
+
 from ._run_impl import (
     AgentToolUseTracker,
     NextStepFinalOutput,
@@ -83,16 +85,13 @@ from .tool_invocation_backend import (
     RayToolInvocationBackend,
     ToolInvocationBackend,
 )
-from .tracing import Span, SpanError, agent_span, get_current_trace, guardrail_span, trace
+from .tracing import Span, SpanError, agent_span, get_current_trace, trace
 from .tracing.span_data import AgentSpanData
 from .usage import Usage
 from .util import _coro, _error_tracing
 from .util._types import MaybeAwaitable
 
-if ray:
-    from agents.setup_ray import ensure_ray_initialized
-
-    _ray_aggregator = ensure_ray_initialized()
+_ray_aggregator = _ensure_ray_initialized() if _use_ray() else None
 
 DEFAULT_MAX_TURNS = 10
 
@@ -188,59 +187,6 @@ class _ServerConversationTracker:
 
 # Type alias for the optional input filter callback
 CallModelInputFilter = Callable[[CallModelData[Any]], MaybeAwaitable[ModelInputData]]
-
-
-if ray:
-
-    @ray.remote
-    def _ray_execute_input_guardrail(
-        guardrail: InputGuardrail[Any],
-        agent: Agent[Any],
-        input_data: str | list[TResponseInputItem],
-        context: RunContextWrapper[Any],
-    ) -> InputGuardrailResult:
-        async def _execute_input_guardrail_impl(
-            guardrail,
-            agent,
-            input_data,
-            context,
-        ):
-            return await guardrail.run(agent, input_data, context)
-
-        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))  # type: ignore[no-any-return]
-
-    @ray.remote
-    def _ray_execute_output_guardrail(
-        guardrail: OutputGuardrail[Any],
-        agent: Agent[Any],
-        output: Any,
-        context: RunContextWrapper[Any],
-    ) -> OutputGuardrailResult:
-        async def _execute_output_guardrail_impl(
-            guardrail,
-            agent,
-            output,
-            context,
-        ):
-            return await guardrail.run(context, agent, output)
-
-        return asyncio.run(_execute_output_guardrail_impl(guardrail, agent, output, context))  # type: ignore[no-any-return]
-
-
-async def _ray_wait_for_guardrails(
-    refs: list[ray.ObjectRef[Any]],
-) -> tuple[list[ray.ObjectRef[Any]], list[ray.ObjectRef[Any]]]:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: ray.wait(refs, num_returns=1))
-
-
-async def _ray_get_guardrail_result(ref: ray.ObjectRef[Any]) -> Any:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: ray.get(ref))
-
-
-def _use_ray() -> bool:
-    return ray is not None and os.environ.get("RAY_BACKEND") == "1"
 
 
 def _default_tool_invocation_backend() -> ToolInvocationBackend:
@@ -1764,21 +1710,6 @@ class AgentRunner:
         if not guardrails:
             return []
 
-        if _use_ray():
-            try:
-                return await cls._run_input_guardrails_with_ray(
-                    agent=agent,
-                    guardrails=guardrails,
-                    input=input,
-                    context=context,
-                )
-            except InputGuardrailTripwireTriggered:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "Ray guardrail execution failed, falling back to local execution: %s", exc
-                )
-
         return await cls._run_input_guardrails_async(
             agent=agent,
             guardrails=guardrails,
@@ -1824,101 +1755,6 @@ class AgentRunner:
         return guardrail_results
 
     @classmethod
-    async def _run_guardrails_with_ray_generic(
-        cls,
-        guardrails: list[InputGuardrail[TContext] | OutputGuardrail[TContext]],
-        remote_func: Any,
-        agent: Agent[TContext],
-        data: Any,
-        context: RunContextWrapper[TContext],
-        tripwire_exception_cls: type[Exception],
-        error_message_prefix: str,
-    ) -> list[Any]:
-        guardrail_results: list[Any] = []
-        pending_refs: list[ray.ObjectRef[Any]] = []
-        ref_to_meta: dict[
-            ray.ObjectRef[Any], tuple[InputGuardrail[Any] | OutputGuardrail[Any], Span[Any]]
-        ] = {}
-
-        try:
-            for guardrail in guardrails:
-                span = guardrail_span(guardrail.get_name())
-                span.start()
-                ref = remote_func.remote(guardrail, agent, data, context)
-                pending_refs.append(ref)
-                ref_to_meta[ref] = (guardrail, span)
-        except Exception:
-            for _, span in ref_to_meta.values():
-                try:
-                    span.finish()
-                except Exception:
-                    logger.exception("Failed to finish guardrail span after Ray submit failure.")
-            raise
-
-        try:
-            while pending_refs:
-                ready_refs, pending_refs = await _ray_wait_for_guardrails(pending_refs)
-                for ref in ready_refs:
-                    meta = ref_to_meta.pop(ref, None)
-                    if meta is None:
-                        continue
-                    guardrail, span = meta
-                    try:
-                        result = await _ray_get_guardrail_result(ref)
-                    except Exception as exc:
-                        span.set_error(
-                            SpanError(
-                                message=f"{error_message_prefix} {type(guardrail).__name__}",
-                                data={"guardrail": guardrail.get_name(), "error": str(exc)},
-                            )
-                        )
-                        span.finish()
-                        for pending in pending_refs:
-                            ray.cancel(pending, force=True, recursive=True)
-
-                    result.guardrail = guardrail
-                    span.span_data.triggered = result.output.tripwire_triggered
-                    span.finish()
-                    guardrail_results.append(result)
-
-                    if result.output.tripwire_triggered:
-                        for pending in pending_refs:
-                            ray.cancel(pending, force=True, recursive=True)
-                        _error_tracing.attach_error_to_current_span(
-                            SpanError(
-                                message="Guardrail tripwire triggered",
-                                data={"guardrail": guardrail.get_name()},
-                            )
-                        )
-                        raise tripwire_exception_cls(result)
-        finally:
-            for _, span in ref_to_meta.values():
-                try:
-                    span.finish()
-                except Exception:
-                    logger.exception("Failed to finish pending guardrail span.")
-
-        return guardrail_results
-
-    @classmethod
-    async def _run_input_guardrails_with_ray(
-        cls,
-        agent: Agent[Any],
-        guardrails: list[InputGuardrail[TContext]],
-        input: str | list[TResponseInputItem],
-        context: RunContextWrapper[TContext],
-    ) -> list[InputGuardrailResult]:
-        return await cls._run_guardrails_with_ray_generic(
-            guardrails=guardrails,  # type: ignore[arg-type]
-            remote_func=_ray_execute_input_guardrail,
-            agent=agent,
-            data=input,
-            context=context,
-            tripwire_exception_cls=InputGuardrailTripwireTriggered,
-            error_message_prefix="Error running input guardrail",
-        )
-
-    @classmethod
     async def _run_output_guardrails(
         cls,
         guardrails: list[OutputGuardrail[TContext]],
@@ -1928,22 +1764,6 @@ class AgentRunner:
     ) -> list[OutputGuardrailResult]:
         if not guardrails:
             return []
-
-        if _use_ray():
-            try:
-                return await cls._run_output_guardrails_with_ray(
-                    guardrails=guardrails,
-                    agent=agent,
-                    output=agent_output,
-                    context=context,
-                )
-            except OutputGuardrailTripwireTriggered:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "Ray output guardrail execution failed, falling back to local execution: %s",
-                    exc,
-                )
 
         guardrail_tasks = [
             asyncio.create_task(
@@ -1971,24 +1791,6 @@ class AgentRunner:
                 guardrail_results.append(result)
 
         return guardrail_results
-
-    @classmethod
-    async def _run_output_guardrails_with_ray(
-        cls,
-        guardrails: list[OutputGuardrail[TContext]],
-        agent: Agent[TContext],
-        output: Any,
-        context: RunContextWrapper[TContext],
-    ) -> list[OutputGuardrailResult]:
-        return await cls._run_guardrails_with_ray_generic(
-            guardrails=guardrails,  # type: ignore[arg-type]
-            remote_func=_ray_execute_output_guardrail,
-            agent=agent,
-            data=output,
-            context=context,
-            tripwire_exception_cls=OutputGuardrailTripwireTriggered,
-            error_message_prefix="Error running output guardrail",
-        )
 
     @classmethod
     async def _get_new_response(

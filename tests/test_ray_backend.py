@@ -23,7 +23,7 @@ async def test_ray_backend_initialization():
     with patch("agents.tool_invocation_backend.ray") as mock_ray:
         mock_ray.is_initialized.return_value = False
         with patch("agents.setup_ray.ray", mock_ray):
-            _backend = RayToolInvocationBackend(auto_init=True)
+            _backend = RayToolInvocationBackend()
             import agents.setup_ray
 
             agents.setup_ray._ray_initialized = False

@@ -1,5 +1,6 @@
 """Centralized Ray setup and initialization."""
 
+import os
 from typing import Any
 
 try:
@@ -26,11 +27,13 @@ def ensure_ray_initialized() -> Any:
 
         _ray_initialized = True
 
-        # Ensure the tracing aggregator is running if Ray is available
-        aggregator = TracingAggregator.options(  # type: ignore[attr-defined]
-            name=TRACING_AGGREGATOR_NAME, get_if_exists=True
-        ).remote()
-        return aggregator
+    # Get or create the tracing aggregator
+    aggregator = TracingAggregator.options(  # type: ignore[attr-defined]
+        name=TRACING_AGGREGATOR_NAME, get_if_exists=True
+    ).remote()
+    return aggregator
 
-    else:
-        return ray.get_actor(TRACING_AGGREGATOR_NAME)
+
+def use_ray() -> bool:
+    """Return True if Ray backend should be used (env-controlled) and Ray is available."""
+    return (ray is not None) and (os.environ.get("RAY_BACKEND") == "1")

@@ -6,19 +6,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from agents.setup_ray import use_ray
+
 from .logger import logger
 from .tool import FunctionTool
 from .tool_context import ToolContext
 
-try:  # pragma: no cover - ray may not be installed in some environments
-    import ray  # type: ignore[unused-ignore]
+if use_ray():
+    import ray
 
     from agents.setup_ray import ensure_ray_initialized
+    from agents.tracing.ray_exporter import setup_distributed_tracing
 
     _ray_aggregator = ensure_ray_initialized()
-    from agents.tracing.ray_exporter import setup_distributed_tracing
-except Exception:  # pragma: no cover - gracefully handle missing ray
-    ray = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -103,7 +103,7 @@ class _RayToolCallPayload:
             )
 
 
-if ray:
+if use_ray():
 
     @ray.remote
     def _ray_execute_function_tool(payload: _RayToolCallPayload) -> Any:
@@ -115,8 +115,7 @@ if ray:
 class RayToolInvocationBackend(ToolInvocationBackend):
     """Ray-based backend that executes tools inside Ray tasks."""
 
-    def __init__(self, *, auto_init: bool = True, ray_remote_args: dict[str, Any] | None = None):
-        self._auto_init = auto_init
+    def __init__(self, *, ray_remote_args: dict[str, Any] | None = None):
         self._fallback_backend = AsyncToolInvocationBackend()
         self._ray_remote_args = ray_remote_args or {}
 

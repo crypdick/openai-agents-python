@@ -11,7 +11,7 @@ try:
 
     from agents.tool_invocation_backend import RayToolInvocationBackend, _RayToolCallPayload
 except ImportError:
-    ray = None
+    ray = None  # type: ignore[assignment]
 
 
 @pytest.mark.asyncio
@@ -24,6 +24,9 @@ async def test_ray_backend_initialization():
         mock_ray.is_initialized.return_value = False
         with patch("agents.setup_ray.ray", mock_ray):
             _backend = RayToolInvocationBackend(auto_init=True)
+            import agents.setup_ray
+
+            agents.setup_ray._ray_initialized = False
             from agents.setup_ray import ensure_ray_initialized
 
             ensure_ray_initialized()
@@ -125,3 +128,31 @@ async def test_ray_backend_serialization_failure_fallback():
 
             assert result == "fallback_result"
             backend._fallback_backend.invoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ray_backend_enabled_via_env_var(monkeypatch):
+    """Test that Ray backend is used when RAY_BACKEND=1 is set."""
+    if not ray:
+        pytest.skip("Ray is not installed")
+
+    monkeypatch.setenv("RAY_BACKEND", "1")
+
+    from agents.run import RunConfig
+
+    # Create a new RunConfig - it should use Ray backend
+    config = RunConfig()
+    assert isinstance(config.tool_invocation_backend, RayToolInvocationBackend)
+
+
+@pytest.mark.asyncio
+async def test_ray_backend_disabled_by_default(monkeypatch):
+    """Test that Async backend is used by default when RAY_BACKEND is not set."""
+    monkeypatch.delenv("RAY_BACKEND", raising=False)
+
+    from agents.run import RunConfig
+    from agents.tool_invocation_backend import AsyncToolInvocationBackend
+
+    # Create a new RunConfig - it should use Async backend
+    config = RunConfig()
+    assert isinstance(config.tool_invocation_backend, AsyncToolInvocationBackend)

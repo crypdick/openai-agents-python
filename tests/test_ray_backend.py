@@ -5,7 +5,6 @@ import pytest
 from agents.tool import FunctionTool
 from agents.tool_context import ToolContext
 
-
 # Check if ray is importable for conditional skipping
 try:
     import ray  # noqa
@@ -24,8 +23,9 @@ async def test_ray_backend_initialization():
     with patch("agents.tool_invocation_backend.ray") as mock_ray:
         mock_ray.is_initialized.return_value = False
         with patch("agents.setup_ray.ray", mock_ray):
-            backend = RayToolInvocationBackend(auto_init=True)
+            _backend = RayToolInvocationBackend(auto_init=True)
             from agents.setup_ray import ensure_ray_initialized
+
             ensure_ray_initialized()
             mock_ray.init.assert_called_once()
 
@@ -59,7 +59,7 @@ async def test_ray_backend_invoke_fallback_if_no_ray():
 @pytest.mark.asyncio
 async def test_ray_backend_invoke_with_resource_args():
     """Test that ray_remote_args are passed to .options()."""
-    if not ray_available:
+    if not ray:
         pytest.skip("Ray is not installed")
 
     with patch("agents.tool_invocation_backend.ray") as mock_ray:
@@ -100,7 +100,7 @@ async def test_ray_backend_invoke_with_resource_args():
 @pytest.mark.asyncio
 async def test_ray_backend_serialization_failure_fallback():
     """Test fallback if Ray task submission fails with TypeError."""
-    if not ray_available:
+    if not ray:
         pytest.skip("Ray is not installed")
 
     with patch("agents.tool_invocation_backend.ray") as mock_ray:

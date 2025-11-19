@@ -105,9 +105,6 @@ class RemoteTracingProcessor(TracingProcessor):
         pass
 
 
-
-
-
 def setup_distributed_tracing():
     """
     Setup distributed tracing for Ray functions.
@@ -121,4 +118,3 @@ def setup_distributed_tracing():
 
     processor = RemoteTracingProcessor()
     provider.set_processors([processor])
-

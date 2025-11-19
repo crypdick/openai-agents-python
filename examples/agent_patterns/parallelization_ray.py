@@ -1,5 +1,4 @@
 import asyncio
-import ray
 from agents import Agent, ItemHelpers, Runner, trace
 
 """
@@ -19,7 +18,6 @@ translation_picker = Agent(
 
 
 async def main():
-    ray.init()
     msg = input("Hi! Enter a message, and we'll translate it to Spanish.\n\n")
 
     # Ensure the entire workflow is a single trace

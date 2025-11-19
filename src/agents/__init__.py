@@ -2,6 +2,15 @@ import logging
 import sys
 from typing import Literal
 
+# Load .env file if available (optional, for development convenience)
+# This ensures environment variables like OPENAI_API_KEY are available
+# before any SDK initialization, including for Ray workers
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv is optional
+
 from openai import AsyncOpenAI
 
 from . import _config

@@ -8,6 +8,11 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast, get_args, get_origin
 
+try:  # pragma: no cover - ray is optional
+    import ray  # type: ignore[unused-ignore]
+except Exception:  # pragma: no cover - gracefully handle missing ray
+    ray = None  # type: ignore[assignment]
+
 from openai.types.responses import (
     ResponseCompletedEvent,
     ResponseOutputItemDoneEvent,
@@ -74,7 +79,7 @@ from .stream_events import (
 from .tool import Tool
 from .tool_invocation_backend import RayToolInvocationBackend, ToolInvocationBackend
 from .tool_guardrails import ToolInputGuardrailResult, ToolOutputGuardrailResult
-from .tracing import Span, SpanError, agent_span, get_current_trace, trace
+from .tracing import Span, SpanError, agent_span, get_current_trace, guardrail_span, trace
 from .tracing.span_data import AgentSpanData
 from .usage import Usage
 from .util import _coro, _error_tracing
@@ -175,6 +180,76 @@ class _ServerConversationTracker:
 # Type alias for the optional input filter callback
 CallModelInputFilter = Callable[[CallModelData[Any]], MaybeAwaitable[ModelInputData]]
 
+
+if ray:
+
+    async def _execute_input_guardrail_impl(
+        guardrail: InputGuardrail[Any],
+        agent: Agent[Any],
+        input_data: str | list[TResponseInputItem],
+        context: RunContextWrapper[Any],
+    ) -> InputGuardrailResult:
+        return await guardrail.run(agent, input_data, context)
+
+    @ray.remote  # type: ignore[misc]
+    def _ray_execute_input_guardrail(
+        guardrail: InputGuardrail[Any],
+        agent: Agent[Any],
+        input_data: str | list[TResponseInputItem],
+        context: RunContextWrapper[Any],
+    ) -> InputGuardrailResult:
+        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))
+
+    async def _execute_output_guardrail_impl(
+        guardrail: OutputGuardrail[Any],
+        agent: Agent[Any],
+        output: Any,
+        context: RunContextWrapper[Any],
+    ) -> OutputGuardrailResult:
+        return await guardrail.run(agent, output, context)
+
+    @ray.remote  # type: ignore[misc]
+    def _ray_execute_output_guardrail(
+        guardrail: OutputGuardrail[Any],
+        agent: Agent[Any],
+        output: Any,
+        context: RunContextWrapper[Any],
+    ) -> OutputGuardrailResult:
+        return asyncio.run(_execute_output_guardrail_impl(guardrail, agent, output, context))
+
+
+def _ray_guardrails_supported() -> bool:
+    return (
+        ray is not None
+        and "_ray_execute_input_guardrail" in globals()
+        and "_ray_execute_output_guardrail" in globals()
+    )
+
+
+def _ensure_ray_initialized_for_guardrails() -> None:
+    if ray and not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
+
+
+async def _ray_wait_for_guardrails(
+    refs: list["ray.ObjectRef[Any]"],
+) -> tuple[list["ray.ObjectRef[Any]"], list["ray.ObjectRef[Any]"]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: ray.wait(refs, num_returns=1))
+
+
+async def _ray_get_guardrail_result(ref: "ray.ObjectRef[Any]") -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: ray.get(ref))
+
+
+def _ray_cancel_guardrail(ref: "ray.ObjectRef[Any]") -> None:
+    if not ray:
+        return
+    try:
+        ray.cancel(ref, force=True)
+    except Exception:
+        logger.exception("Failed to cancel Ray guardrail task.")
 
 @dataclass
 class RunConfig:
@@ -1690,6 +1765,36 @@ class AgentRunner:
         if not guardrails:
             return []
 
+        if _ray_guardrails_supported():
+            try:
+                return await cls._run_input_guardrails_with_ray(
+                    agent=agent,
+                    guardrails=guardrails,
+                    input=input,
+                    context=context,
+                )
+            except InputGuardrailTripwireTriggered:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Ray guardrail execution failed, falling back to local execution: %s", exc
+                )
+
+        return await cls._run_input_guardrails_async(
+            agent=agent,
+            guardrails=guardrails,
+            input=input,
+            context=context,
+        )
+
+    @classmethod
+    async def _run_input_guardrails_async(
+        cls,
+        agent: Agent[Any],
+        guardrails: list[InputGuardrail[TContext]],
+        input: str | list[TResponseInputItem],
+        context: RunContextWrapper[TContext],
+    ) -> list[InputGuardrailResult]:
         guardrail_tasks = [
             asyncio.create_task(
                 RunImpl.run_single_input_guardrail(agent, guardrail, input, context)
@@ -1720,6 +1825,84 @@ class AgentRunner:
         return guardrail_results
 
     @classmethod
+    async def _run_input_guardrails_with_ray(
+        cls,
+        agent: Agent[Any],
+        guardrails: list[InputGuardrail[TContext]],
+        input: str | list[TResponseInputItem],
+        context: RunContextWrapper[TContext],
+    ) -> list[InputGuardrailResult]:
+        if not _ray_guardrails_supported():
+            raise RuntimeError("Ray guardrail execution is not supported in this environment.")
+
+        _ensure_ray_initialized_for_guardrails()
+        guardrail_results: list[InputGuardrailResult] = []
+        pending_refs: list["ray.ObjectRef[InputGuardrailResult]"] = []
+        ref_to_meta: dict[
+            "ray.ObjectRef[InputGuardrailResult]", tuple[InputGuardrail[Any], Span[Any]]
+        ] = {}
+
+        try:
+            for guardrail in guardrails:
+                span = guardrail_span(guardrail.get_name())
+                span.start()
+                ref = _ray_execute_input_guardrail.remote(guardrail, agent, input, context)  # type: ignore[name-defined]
+                pending_refs.append(ref)
+                ref_to_meta[ref] = (guardrail, span)
+        except Exception:
+            for _, span in ref_to_meta.values():
+                try:
+                    span.finish()
+                except Exception:
+                    logger.exception("Failed to finish guardrail span after Ray submit failure.")
+            raise
+
+        try:
+            while pending_refs:
+                ready_refs, pending_refs = await _ray_wait_for_guardrails(pending_refs)  # type: ignore[arg-type]
+                for ref in ready_refs:
+                    guardrail, span = ref_to_meta.pop(ref, (None, None))
+                    if guardrail is None or span is None:
+                        continue
+                    try:
+                        result = await _ray_get_guardrail_result(ref)
+                    except Exception as exc:
+                        span.set_error(
+                            SpanError(
+                                message="Error running input guardrail",
+                                data={"guardrail": guardrail.get_name(), "error": str(exc)},
+                            )
+                        )
+                        span.finish()
+                        for pending in pending_refs:
+                            _ray_cancel_guardrail(pending)  # type: ignore[arg-type]
+                        raise
+
+                    result.guardrail = guardrail
+                    span.span_data.triggered = result.output.tripwire_triggered
+                    span.finish()
+                    guardrail_results.append(result)
+
+                    if result.output.tripwire_triggered:
+                        for pending in pending_refs:
+                            _ray_cancel_guardrail(pending)  # type: ignore[arg-type]
+                        _error_tracing.attach_error_to_current_span(
+                            SpanError(
+                                message="Guardrail tripwire triggered",
+                                data={"guardrail": guardrail.get_name()},
+                            )
+                        )
+                        raise InputGuardrailTripwireTriggered(result)
+        finally:
+            for _, span in ref_to_meta.values():
+                try:
+                    span.finish()
+                except Exception:
+                    logger.exception("Failed to finish pending guardrail span.")
+
+        return guardrail_results
+
+    @classmethod
     async def _run_output_guardrails(
         cls,
         guardrails: list[OutputGuardrail[TContext]],
@@ -1729,6 +1912,21 @@ class AgentRunner:
     ) -> list[OutputGuardrailResult]:
         if not guardrails:
             return []
+
+        if _ray_guardrails_supported():
+            try:
+                return await cls._run_output_guardrails_with_ray(
+                    guardrails=guardrails,
+                    agent=agent,
+                    output=agent_output,
+                    context=context,
+                )
+            except OutputGuardrailTripwireTriggered:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Ray output guardrail execution failed, falling back to local execution: %s", exc
+                )
 
         guardrail_tasks = [
             asyncio.create_task(
@@ -1754,6 +1952,84 @@ class AgentRunner:
                 raise OutputGuardrailTripwireTriggered(result)
             else:
                 guardrail_results.append(result)
+
+        return guardrail_results
+
+    @classmethod
+    async def _run_output_guardrails_with_ray(
+        cls,
+        guardrails: list[OutputGuardrail[TContext]],
+        agent: Agent[TContext],
+        output: Any,
+        context: RunContextWrapper[TContext],
+    ) -> list[OutputGuardrailResult]:
+        if not _ray_guardrails_supported():
+            raise RuntimeError("Ray guardrail execution is not supported in this environment.")
+
+        _ensure_ray_initialized_for_guardrails()
+        guardrail_results: list[OutputGuardrailResult] = []
+        pending_refs: list["ray.ObjectRef[OutputGuardrailResult]"] = []
+        ref_to_meta: dict[
+            "ray.ObjectRef[OutputGuardrailResult]", tuple[OutputGuardrail[Any], Span[Any]]
+        ] = {}
+
+        try:
+            for guardrail in guardrails:
+                span = guardrail_span(guardrail.get_name())
+                span.start()
+                ref = _ray_execute_output_guardrail.remote(guardrail, agent, output, context)  # type: ignore[name-defined]
+                pending_refs.append(ref)
+                ref_to_meta[ref] = (guardrail, span)
+        except Exception:
+            for _, span in ref_to_meta.values():
+                try:
+                    span.finish()
+                except Exception:
+                    logger.exception("Failed to finish guardrail span after Ray submit failure.")
+            raise
+
+        try:
+            while pending_refs:
+                ready_refs, pending_refs = await _ray_wait_for_guardrails(pending_refs)  # type: ignore[arg-type]
+                for ref in ready_refs:
+                    guardrail, span = ref_to_meta.pop(ref, (None, None))
+                    if guardrail is None or span is None:
+                        continue
+                    try:
+                        result = await _ray_get_guardrail_result(ref)
+                    except Exception as exc:
+                        span.set_error(
+                            SpanError(
+                                message="Error running output guardrail",
+                                data={"guardrail": guardrail.get_name(), "error": str(exc)},
+                            )
+                        )
+                        span.finish()
+                        for pending in pending_refs:
+                            _ray_cancel_guardrail(pending)  # type: ignore[arg-type]
+                        raise
+
+                    result.guardrail = guardrail
+                    span.span_data.triggered = result.output.tripwire_triggered
+                    span.finish()
+                    guardrail_results.append(result)
+
+                    if result.output.tripwire_triggered:
+                        for pending in pending_refs:
+                            _ray_cancel_guardrail(pending)  # type: ignore[arg-type]
+                        _error_tracing.attach_error_to_current_span(
+                            SpanError(
+                                message="Guardrail tripwire triggered",
+                                data={"guardrail": guardrail.get_name()},
+                            )
+                        )
+                        raise OutputGuardrailTripwireTriggered(result)
+        finally:
+            for _, span in ref_to_meta.values():
+                try:
+                    span.finish()
+                except Exception:
+                    logger.exception("Failed to finish pending guardrail span.")
 
         return guardrail_results
 

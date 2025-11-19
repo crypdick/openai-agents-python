@@ -85,6 +85,11 @@ from .usage import Usage
 from .util import _coro, _error_tracing
 from .util._types import MaybeAwaitable
 
+if ray:
+    from src.agents.setup_ray import ensure_ray_initialized
+
+    _ray_aggregator = ensure_ray_initialized()
+
 DEFAULT_MAX_TURNS = 10
 
 DEFAULT_AGENT_RUNNER: AgentRunner = None  # type: ignore
@@ -183,14 +188,6 @@ CallModelInputFilter = Callable[[CallModelData[Any]], MaybeAwaitable[ModelInputD
 
 if ray:
 
-    async def _execute_input_guardrail_impl(
-        guardrail: InputGuardrail[Any],
-        agent: Agent[Any],
-        input_data: str | list[TResponseInputItem],
-        context: RunContextWrapper[Any],
-    ) -> InputGuardrailResult:
-        return await guardrail.run(agent, input_data, context)
-
     @ray.remote  # type: ignore[misc]
     def _ray_execute_input_guardrail(
         guardrail: InputGuardrail[Any],
@@ -198,15 +195,15 @@ if ray:
         input_data: str | list[TResponseInputItem],
         context: RunContextWrapper[Any],
     ) -> InputGuardrailResult:
-        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))
+        async def _execute_input_guardrail_impl(
+            guardrail,
+            agent,
+            input_data,
+            context,
+        ):
+            return await guardrail.run(agent, input_data, context)
 
-    async def _execute_output_guardrail_impl(
-        guardrail: OutputGuardrail[Any],
-        agent: Agent[Any],
-        output: Any,
-        context: RunContextWrapper[Any],
-    ) -> OutputGuardrailResult:
-        return await guardrail.run(context, agent, output)
+        return asyncio.run(_execute_input_guardrail_impl(guardrail, agent, input_data, context))
 
     @ray.remote  # type: ignore[misc]
     def _ray_execute_output_guardrail(
@@ -215,20 +212,15 @@ if ray:
         output: Any,
         context: RunContextWrapper[Any],
     ) -> OutputGuardrailResult:
+        async def _execute_output_guardrail_impl(
+            guardrail,
+            agent,
+            output,
+            context,
+        ):
+            return await guardrail.run(context, agent, output)
+
         return asyncio.run(_execute_output_guardrail_impl(guardrail, agent, output, context))
-
-
-def _ray_guardrails_supported() -> bool:
-    return (
-        ray is not None
-        and "_ray_execute_input_guardrail" in globals()
-        and "_ray_execute_output_guardrail" in globals()
-    )
-
-
-def _ensure_ray_initialized_for_guardrails() -> None:
-    if ray and not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
 
 
 async def _ray_wait_for_guardrails(
@@ -241,15 +233,6 @@ async def _ray_wait_for_guardrails(
 async def _ray_get_guardrail_result(ref: ray.ObjectRef[Any]) -> Any:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: ray.get(ref))
-
-
-def _ray_cancel_guardrail(ref: ray.ObjectRef[Any]) -> None:
-    if not ray:
-        return
-    try:
-        ray.cancel(ref, force=True)
-    except Exception:
-        logger.exception("Failed to cancel Ray guardrail task.")
 
 
 @dataclass
@@ -1764,7 +1747,7 @@ class AgentRunner:
         if not guardrails:
             return []
 
-        if _ray_guardrails_supported():
+        if ray:
             try:
                 return await cls._run_input_guardrails_with_ray(
                     agent=agent,
@@ -1834,7 +1817,6 @@ class AgentRunner:
         tripwire_exception_cls: type[Exception],
         error_message_prefix: str,
     ) -> list[Any]:
-        _ensure_ray_initialized_for_guardrails()
         guardrail_results: list[Any] = []
         pending_refs: list[ray.ObjectRef[Any]] = []
         ref_to_meta: dict[
@@ -1875,8 +1857,7 @@ class AgentRunner:
                         )
                         span.finish()
                         for pending in pending_refs:
-                            _ray_cancel_guardrail(pending)
-                        raise
+                            ray.cancel(pending, force=True, recursive=True)
 
                     result.guardrail = guardrail
                     span.span_data.triggered = result.output.tripwire_triggered
@@ -1885,7 +1866,7 @@ class AgentRunner:
 
                     if result.output.tripwire_triggered:
                         for pending in pending_refs:
-                            _ray_cancel_guardrail(pending)
+                            ray.cancel(pending, force=True, recursive=True)
                         _error_tracing.attach_error_to_current_span(
                             SpanError(
                                 message="Guardrail tripwire triggered",
@@ -1910,9 +1891,6 @@ class AgentRunner:
         input: str | list[TResponseInputItem],
         context: RunContextWrapper[TContext],
     ) -> list[InputGuardrailResult]:
-        if not _ray_guardrails_supported():
-            raise RuntimeError("Ray guardrail execution is not supported in this environment.")
-
         return await cls._run_guardrails_with_ray_generic(
             guardrails=guardrails,  # type: ignore[arg-type]
             remote_func=_ray_execute_input_guardrail,  # type: ignore[name-defined]
@@ -1934,7 +1912,7 @@ class AgentRunner:
         if not guardrails:
             return []
 
-        if _ray_guardrails_supported():
+        if ray:
             try:
                 return await cls._run_output_guardrails_with_ray(
                     guardrails=guardrails,
@@ -1985,9 +1963,6 @@ class AgentRunner:
         output: Any,
         context: RunContextWrapper[TContext],
     ) -> list[OutputGuardrailResult]:
-        if not _ray_guardrails_supported():
-            raise RuntimeError("Ray guardrail execution is not supported in this environment.")
-
         return await cls._run_guardrails_with_ray_generic(
             guardrails=guardrails,  # type: ignore[arg-type]
             remote_func=_ray_execute_output_guardrail,  # type: ignore[name-defined]

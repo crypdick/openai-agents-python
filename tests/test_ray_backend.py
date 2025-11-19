@@ -4,33 +4,35 @@ import pytest
 
 from agents.tool import FunctionTool
 from agents.tool_context import ToolContext
-from agents.tool_invocation_backend import RayToolInvocationBackend, _RayToolCallPayload
+
 
 # Check if ray is importable for conditional skipping
 try:
-    import ray
+    import ray  # noqa
 
-    ray_available = True
+    from agents.tool_invocation_backend import RayToolInvocationBackend, _RayToolCallPayload
 except ImportError:
-    ray_available = False
+    ray = None
 
 
 @pytest.mark.asyncio
 async def test_ray_backend_initialization():
     """Test that RayToolInvocationBackend initializes Ray if needed."""
-    if not ray_available:
+    if not ray:
         pytest.skip("Ray is not installed")
 
     with patch("agents.tool_invocation_backend.ray") as mock_ray:
         mock_ray.is_initialized.return_value = False
-        backend = RayToolInvocationBackend(auto_init=True)
-        backend._ensure_ray_initialized()
-        mock_ray.init.assert_called_once_with(ignore_reinit_error=True)
+        with patch("agents.setup_ray.ray", mock_ray):
+            backend = RayToolInvocationBackend(auto_init=True)
+            from agents.setup_ray import ensure_ray_initialized
+            ensure_ray_initialized()
+            mock_ray.init.assert_called_once()
 
-        mock_ray.is_initialized.return_value = True
-        backend._ensure_ray_initialized()
-        # Should not call init again
-        assert mock_ray.init.call_count == 1
+            mock_ray.is_initialized.return_value = True
+            ensure_ray_initialized()
+            # Should not call init again
+            assert mock_ray.init.call_count == 1
 
 
 @pytest.mark.asyncio

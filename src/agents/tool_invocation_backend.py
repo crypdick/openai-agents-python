@@ -11,6 +11,11 @@ from .tool_context import ToolContext
 
 try:  # pragma: no cover - ray may not be installed in some environments
     import ray  # type: ignore[unused-ignore]
+
+    from src.agents.setup_ray import ensure_ray_initialized
+
+    _ray_aggregator = ensure_ray_initialized()
+    from src.agents.tracing.ray_exporter import setup_distributed_tracing
 except Exception:  # pragma: no cover - gracefully handle missing ray
     ray = None  # type: ignore[assignment]
 
@@ -55,6 +60,7 @@ if ray:
     @ray.remote  # type: ignore[misc]
     def _ray_execute_function_tool(payload: _RayToolCallPayload) -> Any:
         """Execute an async function tool in a Ray worker."""
+        setup_distributed_tracing()
         return asyncio.run(payload.run())
 
 
@@ -72,11 +78,9 @@ class RayToolInvocationBackend(ToolInvocationBackend):
         tool_context: ToolContext[Any],
         tool_arguments: str,
     ) -> Any:
-        if not ray or "_ray_execute_function_tool" not in globals():
+        if not ray:
             logger.debug("Ray is unavailable; falling back to inline tool execution.")
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
-
-        self._ensure_ray_initialized()
 
         payload = _RayToolCallPayload(
             func_tool=func_tool,
@@ -100,11 +104,6 @@ class RayToolInvocationBackend(ToolInvocationBackend):
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
 
         return await self._ray_get_async(object_ref)
-
-    def _ensure_ray_initialized(self) -> None:
-        if self._auto_init and not ray.is_initialized():  # type: ignore[union-attr]
-            logger.debug("Initializing Ray for tool invocation backend.")
-            ray.init(ignore_reinit_error=True)  # type: ignore[union-attr]
 
     async def _ray_get_async(self, object_ref: ray.ObjectRef[Any]) -> Any:
         loop = asyncio.get_running_loop()

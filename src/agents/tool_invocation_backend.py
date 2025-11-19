@@ -19,6 +19,8 @@ if use_ray():
     from agents.tracing.ray_exporter import setup_distributed_tracing
 
     _ray_aggregator = ensure_ray_initialized()
+else:
+    ray = None  # type: ignore[assignment]
 
 
 @dataclass

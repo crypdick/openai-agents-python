@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# Set RAY_BACKEND=1 if TEST_RAY_BACKEND=1 BEFORE any imports
+# This ensures use_ray() returns True when modules are imported
+if os.environ.get("TEST_RAY_BACKEND") == "1":
+    os.environ["RAY_BACKEND"] = "1"
+else:
+    os.environ.pop("RAY_BACKEND", None)
 
 from agents.models import _openai_shared
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
@@ -29,12 +38,17 @@ def ensure_openai_api_key():
         os.environ["OPENAI_API_KEY"] = "test_key"
 
 
-# Disable Ray backend by default for all tests unless explicitly enabled
 @pytest.fixture(autouse=True)
-def disable_ray_backend(monkeypatch):
-    import os
-
-    # If TEST_RAY_BACKEND=1, enable Ray backend for all tests
+def control_ray_backend(monkeypatch):
+    """
+    Set RAY_BACKEND based on TEST_RAY_BACKEND environment variable.
+    
+    When TEST_RAY_BACKEND=1: Enable Ray backend for all tests
+    Otherwise: Disable Ray backend for all tests
+    
+    Note: This doesn't affect the module-level imports that happened at startup,
+    but it does affect runtime checks and ensures consistency.
+    """
     if os.environ.get("TEST_RAY_BACKEND") == "1":
         monkeypatch.setenv("RAY_BACKEND", "1")
     else:

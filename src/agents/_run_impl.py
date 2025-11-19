@@ -103,6 +103,7 @@ from .tool_guardrails import (
     ToolOutputGuardrailData,
     ToolOutputGuardrailResult,
 )
+from .tool_invocation_backend import ToolInvocationBackend
 from .tracing import (
     SpanError,
     Trace,
@@ -878,6 +879,7 @@ class RunImpl:
         agent: Agent[TContext],
         hooks: RunHooks[TContext],
         tool_call: ResponseFunctionToolCall,
+        backend: ToolInvocationBackend,
     ) -> Any:
         """Execute the core tool function with before/after hooks.
 
@@ -887,6 +889,7 @@ class RunImpl:
             agent: The agent executing the tool.
             hooks: The run hooks to execute.
             tool_call: The tool call details.
+            backend: Backend responsible for executing the tool call.
 
         Returns:
             The result from the tool execution.
@@ -900,7 +903,7 @@ class RunImpl:
             ),
         )
 
-        return await func_tool.on_invoke_tool(tool_context, tool_call.arguments)
+        return await backend.invoke(func_tool, tool_context, tool_call.arguments)
 
     @classmethod
     async def execute_function_tool_calls(
@@ -917,6 +920,7 @@ class RunImpl:
         # Collect guardrail results
         tool_input_guardrail_results: list[ToolInputGuardrailResult] = []
         tool_output_guardrail_results: list[ToolOutputGuardrailResult] = []
+        backend = config.tool_invocation_backend
 
         async def run_single_tool(
             func_tool: FunctionTool, tool_call: ResponseFunctionToolCall
@@ -949,6 +953,7 @@ class RunImpl:
                             agent=agent,
                             hooks=hooks,
                             tool_call=tool_call,
+                            backend=backend,
                         )
 
                         # 3) Run output tool guardrails, if any

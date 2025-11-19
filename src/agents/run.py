@@ -72,6 +72,7 @@ from .stream_events import (
     StreamEvent,
 )
 from .tool import Tool
+from .tool_invocation_backend import RayToolInvocationBackend, ToolInvocationBackend
 from .tool_guardrails import ToolInputGuardrailResult, ToolOutputGuardrailResult
 from .tracing import Span, SpanError, agent_span, get_current_trace, trace
 from .tracing.span_data import AgentSpanData
@@ -264,6 +265,11 @@ class RunConfig:
     This allows you to edit the input sent to the model e.g. to stay within a token limit.
     For example, you can use this to add a system prompt to the input.
     """
+
+    tool_invocation_backend: ToolInvocationBackend = field(
+        default_factory=RayToolInvocationBackend
+    )
+    """Backend used to execute function tools. Ray is the default implementation."""
 
 
 class RunOptions(TypedDict, Generic[TContext]):

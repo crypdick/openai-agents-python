@@ -1,16 +1,20 @@
 import logging
+import os
 import sys
 from typing import Literal
 
+# FIXME:ricardo remove this before opening a PR
 # Load .env file if available (optional, for development convenience)
 # This ensures environment variables like OPENAI_API_KEY are available
 # before any SDK initialization, including for Ray workers
-try:
-    from dotenv import load_dotenv
+# Skip loading in test environments to avoid interference with test fixtures
+if "pytest" not in sys.modules:
+    try:
+        from dotenv import load_dotenv
 
-    load_dotenv()
-except ImportError:
-    pass  # python-dotenv is optional
+        load_dotenv()
+    except ImportError:
+        pass  # python-dotenv is optional
 
 from openai import AsyncOpenAI
 

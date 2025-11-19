@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-
 from .logger import logger
 from .tool import FunctionTool
 from .tool_context import ToolContext
@@ -62,9 +61,10 @@ if ray:
 class RayToolInvocationBackend(ToolInvocationBackend):
     """Ray-based backend that executes tools inside Ray tasks."""
 
-    def __init__(self, *, auto_init: bool = True):
+    def __init__(self, *, auto_init: bool = True, ray_remote_args: dict[str, Any] | None = None):
         self._auto_init = auto_init
         self._fallback_backend = AsyncToolInvocationBackend()
+        self._ray_remote_args = ray_remote_args or {}
 
     async def invoke(
         self,
@@ -85,18 +85,18 @@ class RayToolInvocationBackend(ToolInvocationBackend):
         )
 
         try:
-            object_ref = _ray_execute_function_tool.remote(payload)  # type: ignore[name-defined]
+            object_ref = _ray_execute_function_tool.options(  # type: ignore[name-defined]
+                **self._ray_remote_args
+            ).remote(payload)
         except TypeError as exc:
             # Ray throws TypeError when serialization fails during task submission
             logger.warning(
-                "Failed to serialize tool payload for Ray, running inline instead: %s", exc
+                "Failed to serialize tool payload for Ray, falling back to default backend: %s", exc
             )
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
         except Exception as exc:
             # Catch-all for other Ray submission errors
-            logger.warning(
-                "Failed to submit Ray task, running inline instead: %s", exc
-            )
+            logger.warning("Failed to submit Ray task, falling back to default backend: %s", exc)
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
 
         return await self._ray_get_async(object_ref)
@@ -106,7 +106,7 @@ class RayToolInvocationBackend(ToolInvocationBackend):
             logger.debug("Initializing Ray for tool invocation backend.")
             ray.init(ignore_reinit_error=True)  # type: ignore[union-attr]
 
-    async def _ray_get_async(self, object_ref: "ray.ObjectRef[Any]") -> Any:
+    async def _ray_get_async(self, object_ref: ray.ObjectRef[Any]) -> Any:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(None, lambda: ray.get(object_ref))

@@ -7,6 +7,7 @@ from typing import Literal
 # before any SDK initialization, including for Ray workers
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # python-dotenv is optional

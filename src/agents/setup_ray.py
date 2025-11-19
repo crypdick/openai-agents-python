@@ -5,7 +5,7 @@ from typing import Any
 try:
     import ray
 
-    from src.agents.tracing.ray_exporter import TRACING_AGGREGATOR_NAME, TracingAggregator
+    from agents.tracing.ray_exporter import TRACING_AGGREGATOR_NAME, TracingAggregator
 except ImportError:
     ray = None
 

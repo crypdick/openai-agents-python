@@ -12,10 +12,10 @@ from .tool_context import ToolContext
 try:  # pragma: no cover - ray may not be installed in some environments
     import ray  # type: ignore[unused-ignore]
 
-    from src.agents.setup_ray import ensure_ray_initialized
+    from agents.setup_ray import ensure_ray_initialized
 
     _ray_aggregator = ensure_ray_initialized()
-    from src.agents.tracing.ray_exporter import setup_distributed_tracing
+    from agents.tracing.ray_exporter import setup_distributed_tracing
 except Exception:  # pragma: no cover - gracefully handle missing ray
     ray = None  # type: ignore[assignment]
 

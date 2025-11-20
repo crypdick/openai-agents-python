@@ -1,5 +1,4 @@
-"""Tests for tool invocation backend when Ray is enabled (RAY_BACKEND=1).
-"""
+"""Tests for tool invocation backend when Ray is enabled (RAY_BACKEND=1)."""
 
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,6 +36,7 @@ else:
     RayToolInvocationBackend = None  # type: ignore[assignment, misc]
     _RayToolCallPayload = None  # type: ignore[assignment]
     _ray_execute_function_tool = None  # type: ignore[assignment]
+
 
 @pytest.mark.asyncio
 async def test_ray_backend_initialization():
@@ -125,6 +125,7 @@ async def test_ray_backend_invoke_with_resource_args():
 
             tool = MagicMock(spec=FunctionTool)
             tool.name = "mock_tool"
+            tool._bypass_ray_backend = False  # Ensure it doesn't bypass
             context = MagicMock(spec=ToolContext)
 
             result = await backend.invoke(tool, context, "{}")
@@ -187,4 +188,3 @@ async def test_ray_backend_enabled_via_env_var():
     # Create a new RunConfig - it should use Ray backend
     config = RunConfig()
     assert isinstance(config.tool_invocation_backend, RayToolInvocationBackend)
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, cast
@@ -1227,6 +1228,8 @@ async def test_default_send_all_items_streamed():
 @pytest.mark.asyncio
 async def test_dynamic_tool_addition_run() -> None:
     """Test that tools can be added to an agent during a run."""
+    if os.environ.get("TEST_RAY_BACKEND") == "1":
+        pytest.skip("Ray backend doesn't support agent mutation in tool execution.")
     model = FakeModel()
 
     executed: dict[str, bool] = {"called": False}

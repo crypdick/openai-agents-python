@@ -1,6 +1,9 @@
 from typing import Any
 
-import ray
+try:
+    import ray
+except ImportError:
+    ray = None  # type: ignore[assignment]
 
 from .processor_interface import TracingProcessor
 from .processors import BatchTraceProcessor, default_exporter

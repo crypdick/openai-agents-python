@@ -27,8 +27,8 @@ if TEST_RAY_BACKEND:
     # Import after setting RAY_BACKEND to ensure the module loads correctly
     from agents.tool_invocation_backend import (
         RayToolInvocationBackend,
-        _RayToolCallPayload,
         _ray_execute_function_tool,
+        _RayToolCallPayload,
     )
 else:
     # Dummy imports to avoid collection errors

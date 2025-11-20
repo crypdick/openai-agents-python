@@ -82,7 +82,6 @@ class FakeMCPServer(MCPServer):
         server_name: str = "fake_mcp_server",
         use_ray_for_tools: bool = False,
     ):
-        
         super().__init__(use_structured_content=False, use_ray_for_tools=use_ray_for_tools)
         self.tools: list[MCPTool] = tools or []
         self.tool_calls: list[str] = []

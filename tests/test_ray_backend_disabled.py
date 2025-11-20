@@ -68,4 +68,3 @@ async def test_async_backend_direct_invocation():
     result = await backend.invoke(tool, context, "{}")
     assert result == "direct_result"
     tool.on_invoke_tool.assert_called_once_with(context, "{}")
-

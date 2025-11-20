@@ -18,7 +18,8 @@ if use_ray():
     from agents.setup_ray import ensure_ray_initialized
     from agents.tracing.ray_exporter import setup_distributed_tracing
 
-    _ray_aggregator = ensure_ray_initialized()
+    # Reference the actor here to prevent it from being garbage collected
+    _ray_aggregator = None
 else:
     ray = None  # type: ignore[assignment]
 
@@ -135,6 +136,11 @@ class RayToolInvocationBackend(ToolInvocationBackend):
         if not ray:
             logger.debug("Ray is unavailable; falling back to inline tool execution.")
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
+
+        # Lazy initialization of Ray resources
+        global _ray_aggregator
+        if _ray_aggregator is None:
+            _ray_aggregator = ensure_ray_initialized()
 
         payload = _RayToolCallPayload(
             func_tool=func_tool,

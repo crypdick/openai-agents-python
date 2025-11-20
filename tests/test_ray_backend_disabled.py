@@ -30,7 +30,9 @@ async def test_ray_backend_disabled_by_default():
 
 @pytest.mark.asyncio
 async def test_ray_backend_fallback_when_ray_not_available():
-    """Test that RayToolInvocationBackend falls back to inline execution when ray is not available."""
+    """
+    Test that RayToolInvocationBackend falls back to inline execution when ray is not available.
+    """
     # When RAY_BACKEND is not set, ray should be None at module level,
     # so RayToolInvocationBackend should always fall back
     backend = RayToolInvocationBackend()

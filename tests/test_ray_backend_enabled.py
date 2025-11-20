@@ -21,8 +21,8 @@ pytestmark = pytest.mark.skipif(
 if TEST_RAY_BACKEND:
     try:
         import ray
-    except ImportError:
-        raise RuntimeError("Ray needs to be installed to run the Ray backend tests.")
+    except ImportError as e:
+        raise RuntimeError("Ray needs to be installed to run the Ray backend tests.") from e
 
     # Import after setting RAY_BACKEND to ensure the module loads correctly
     from agents.tool_invocation_backend import (

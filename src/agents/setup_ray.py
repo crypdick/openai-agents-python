@@ -15,12 +15,6 @@ except ImportError:
 _ray_initialized = False
 
 
-def _get_project_root() -> str:
-    # __file__ = <repo>/src/agents/setup_ray.py
-    # parents[0] = src/agents, parents[1] = src, parents[2] = repo root
-    return str(Path(__file__).resolve().parents[2])
-
-
 def ensure_ray_initialized() -> Any:
     if not ray:
         # TODO: log warning
@@ -31,11 +25,7 @@ def ensure_ray_initialized() -> Any:
         if ray.is_initialized():
             pass
         else:
-            ray.init(
-                runtime_env={
-                    "working_dir": _get_project_root(),
-                }
-            )
+            ray.init()
 
         _ray_initialized = True
 

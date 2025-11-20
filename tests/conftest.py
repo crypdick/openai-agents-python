@@ -83,32 +83,6 @@ def shutdown_trace_provider():
     get_trace_provider().shutdown()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def shutdown_ray():
-    """Shutdown Ray at the end of the test session and force kill all Ray processes."""
-    yield
-
-    # First try graceful shutdown
-    try:
-        import ray
-
-        if ray.is_initialized():
-            ray.shutdown()
-    except Exception:
-        pass
-
-    # Force stop all Ray processes using ray CLI
-    import subprocess
-
-    try:
-        subprocess.run(
-            ["ray", "stop", "--force", "--grace-period", "0"],
-            capture_output=True,
-            timeout=10,
-        )
-    except Exception:
-        # Ignore errors during cleanup
-        pass
 
 
 @pytest.fixture(autouse=True)

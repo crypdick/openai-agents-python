@@ -42,10 +42,10 @@ def ensure_openai_api_key():
 def control_ray_backend(monkeypatch):
     """
     Set RAY_BACKEND based on TEST_RAY_BACKEND environment variable.
-    
+
     When TEST_RAY_BACKEND=1: Enable Ray backend for all tests
     Otherwise: Disable Ray backend for all tests
-    
+
     Note: This doesn't affect the module-level imports that happened at startup,
     but it does affect runtime checks and ensures consistency.
     """

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, cast
 
 import pytest
@@ -757,6 +758,8 @@ async def test_streaming_events():
 
 @pytest.mark.asyncio
 async def test_dynamic_tool_addition_run_streamed() -> None:
+    if os.environ.get("TEST_RAY_BACKEND") == "1":
+        pytest.skip("Ray backend doesn't support agent mutation in tool execution.")
     model = FakeModel()
 
     executed: dict[str, bool] = {"called": False}

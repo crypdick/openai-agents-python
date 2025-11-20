@@ -30,7 +30,9 @@ async def test_ray_backend_disabled_by_default():
 
 @pytest.mark.asyncio
 async def test_ray_backend_fallback_when_ray_not_available():
-    """Test that RayToolInvocationBackend falls back to inline execution when ray is not available."""
+    """
+    Test that RayToolInvocationBackend falls back to inline execution when ray is not available.
+    """
     # When RAY_BACKEND is not set, ray should be None at module level,
     # so RayToolInvocationBackend should always fall back
     backend = RayToolInvocationBackend()
@@ -42,6 +44,7 @@ async def test_ray_backend_fallback_when_ray_not_available():
     backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
     tool = MagicMock(spec=FunctionTool)
+    tool.name = "mock_tool"
     context = MagicMock(spec=ToolContext)
 
     result = await backend.invoke(tool, context, "{}")
@@ -59,6 +62,7 @@ async def test_async_backend_direct_invocation():
         return "direct_result"
 
     tool = MagicMock(spec=FunctionTool)
+    tool.name = "mock_tool"
     tool.on_invoke_tool = AsyncMock(side_effect=mock_on_invoke_tool)
 
     context = MagicMock(spec=ToolContext)
@@ -66,4 +70,3 @@ async def test_async_backend_direct_invocation():
     result = await backend.invoke(tool, context, "{}")
     assert result == "direct_result"
     tool.on_invoke_tool.assert_called_once_with(context, "{}")
-

@@ -1,5 +1,4 @@
-"""Tests for tool invocation backend when Ray is enabled (RAY_BACKEND=1).
-"""
+"""Tests for tool invocation backend when Ray is enabled (RAY_BACKEND=1)."""
 
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,21 +21,22 @@ pytestmark = pytest.mark.skipif(
 if TEST_RAY_BACKEND:
     try:
         import ray
-    except ImportError:
-        raise RuntimeError("Ray needs to be installed to run the Ray backend tests.")
+    except ImportError as e:
+        raise RuntimeError("Ray needs to be installed to run the Ray backend tests.") from e
 
     # Import after setting RAY_BACKEND to ensure the module loads correctly
     from agents.tool_invocation_backend import (
         RayToolInvocationBackend,
-        _RayToolCallPayload,
         _ray_execute_function_tool,
+        _RayToolCallPayload,
     )
 else:
     # Dummy imports to avoid collection errors
     ray = None  # type: ignore[assignment]
     RayToolInvocationBackend = None  # type: ignore[assignment, misc]
-    _RayToolCallPayload = None  # type: ignore[assignment]
+    _RayToolCallPayload = None  # type: ignore[assignment, misc]
     _ray_execute_function_tool = None  # type: ignore[assignment]
+
 
 @pytest.mark.asyncio
 async def test_ray_backend_initialization():
@@ -77,7 +77,7 @@ async def test_ray_backend_invoke_fallback_if_ray_unavailable():
     # Temporarily set ray to None to simulate it not being available
     original_ray = tib_module.ray  # type: ignore[attr-defined]
     try:
-        tib_module.ray = None  # type: ignore[attr-defined]
+        tib_module.ray = None  # type: ignore[attr-defined, assignment]
 
         backend = RayToolInvocationBackend()
 
@@ -88,6 +88,7 @@ async def test_ray_backend_invoke_fallback_if_ray_unavailable():
         backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
         tool = MagicMock(spec=FunctionTool)
+        tool.name = "mock_tool"
         context = MagicMock(spec=ToolContext)
 
         result = await backend.invoke(tool, context, "{}")
@@ -112,9 +113,9 @@ async def test_ray_backend_invoke_with_resource_args():
     mock_options_ret.remote.return_value = mock_obj_ref
 
     # Save original and replace
-    original_func = tib_module._ray_execute_function_tool  # type: ignore[attr-defined]
+    original_func = tib_module._ray_execute_function_tool
     try:
-        tib_module._ray_execute_function_tool = mock_remote_func  # type: ignore[attr-defined]
+        tib_module._ray_execute_function_tool = mock_remote_func
 
         backend = RayToolInvocationBackend(ray_remote_args={"num_cpus": 2})
 
@@ -123,6 +124,8 @@ async def test_ray_backend_invoke_with_resource_args():
             mock_get.return_value = "ray_result"
 
             tool = MagicMock(spec=FunctionTool)
+            tool.name = "mock_tool"
+            tool._bypass_ray_backend = False  # Ensure it doesn't bypass
             context = MagicMock(spec=ToolContext)
 
             result = await backend.invoke(tool, context, "{}")
@@ -139,7 +142,7 @@ async def test_ray_backend_invoke_with_resource_args():
             assert payload.tool_arguments == "{}"
     finally:
         # Restore original
-        tib_module._ray_execute_function_tool = original_func  # type: ignore[attr-defined]
+        tib_module._ray_execute_function_tool = original_func
 
 
 @pytest.mark.asyncio
@@ -151,9 +154,9 @@ async def test_ray_backend_serialization_failure_fallback():
     mock_remote_func.options.return_value.remote.side_effect = TypeError("Pickle error")
 
     # Save original and replace
-    original_func = tib_module._ray_execute_function_tool  # type: ignore[attr-defined]
+    original_func = tib_module._ray_execute_function_tool
     try:
-        tib_module._ray_execute_function_tool = mock_remote_func  # type: ignore[attr-defined]
+        tib_module._ray_execute_function_tool = mock_remote_func
 
         backend = RayToolInvocationBackend()
 
@@ -164,6 +167,7 @@ async def test_ray_backend_serialization_failure_fallback():
         backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
         tool = MagicMock(spec=FunctionTool)
+        tool.name = "mock_tool"
         context = MagicMock(spec=ToolContext)
 
         result = await backend.invoke(tool, context, "{}")
@@ -172,7 +176,7 @@ async def test_ray_backend_serialization_failure_fallback():
         backend._fallback_backend.invoke.assert_called_once()
     finally:
         # Restore original
-        tib_module._ray_execute_function_tool = original_func  # type: ignore[attr-defined]
+        tib_module._ray_execute_function_tool = original_func
 
 
 @pytest.mark.asyncio
@@ -184,4 +188,3 @@ async def test_ray_backend_enabled_via_env_var():
     # Create a new RunConfig - it should use Ray backend
     config = RunConfig()
     assert isinstance(config.tool_invocation_backend, RayToolInvocationBackend)
-

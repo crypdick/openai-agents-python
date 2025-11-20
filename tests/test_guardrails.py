@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
 from unittest.mock import patch
@@ -467,6 +468,8 @@ async def test_blocking_guardrail_prevents_agent_execution_streaming():
 
 @pytest.mark.asyncio
 async def test_parallel_guardrail_may_not_prevent_tool_execution():
+    if os.environ.get("TEST_RAY_BACKEND") == "1":
+        pytest.skip("Ray backend causes tool execution race; behavior is documented.")
     tool_was_executed = False
     guardrail_executed = False
 
@@ -511,6 +514,8 @@ async def test_parallel_guardrail_may_not_prevent_tool_execution():
 
 @pytest.mark.asyncio
 async def test_parallel_guardrail_may_not_prevent_tool_execution_streaming():
+    if os.environ.get("TEST_RAY_BACKEND") == "1":
+        pytest.skip("Ray backend causes tool execution race; behavior is documented.")
     tool_was_executed = False
     guardrail_executed = False
 

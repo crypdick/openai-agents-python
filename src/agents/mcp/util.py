@@ -176,6 +176,7 @@ class MCPUtil:
             params_json_schema=schema,
             on_invoke_tool=invoke_func,
             strict_json_schema=is_strict,
+            _bypass_ray_backend=True,  # MCP servers manage their own execution
         )
 
     @classmethod

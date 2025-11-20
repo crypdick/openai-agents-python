@@ -186,6 +186,10 @@ class FunctionTool:
     tool_output_guardrails: list[ToolOutputGuardrail[Any]] | None = None
     """Optional list of output guardrails to run after invoking this tool."""
 
+    _bypass_ray_backend: bool = False
+    """Internal flag to bypass the Ray backend and always execute inline.
+    Used for tools that manage their own distributed execution (like MCP servers)."""
+
     def __post_init__(self):
         if self.strict_json_schema:
             self.params_json_schema = ensure_strict_json_schema(self.params_json_schema)

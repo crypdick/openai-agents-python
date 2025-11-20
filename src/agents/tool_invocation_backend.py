@@ -127,6 +127,11 @@ class RayToolInvocationBackend(ToolInvocationBackend):
         tool_context: ToolContext[Any],
         tool_arguments: str,
     ) -> Any:
+        # Check if tool explicitly bypasses Ray backend (e.g., MCP tools)
+        if getattr(func_tool, "_bypass_ray_backend", False):
+            logger.debug(f"Tool {func_tool.name} bypasses Ray backend; executing inline.")
+            return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)
+
         if not ray:
             logger.debug("Ray is unavailable; falling back to inline tool execution.")
             return await self._fallback_backend.invoke(func_tool, tool_context, tool_arguments)

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class MCPServer(abc.ABC):
     """Base class for Model Context Protocol servers."""
 
-    def __init__(self, use_structured_content: bool = False):
+    def __init__(self, use_structured_content: bool = False, use_ray_for_tools: bool = False):
         """
         Args:
             use_structured_content: Whether to use `tool_result.structured_content` when calling an
@@ -40,8 +40,12 @@ class MCPServer(abc.ABC):
                 include the structured content in the `tool_result.content`, and using it by
                 default will cause duplicate content. You can set this to True if you know the
                 server will not duplicate the structured content in the `tool_result.content`.
+            use_ray_for_tools: Whether to execute tool calls using Ray for distributed execution.
+                This is useful for CPU-intensive MCP tools (e.g., chess engines, data processing).
+                Defaults to False. Only takes effect if Ray backend is enabled globally.
         """
         self.use_structured_content = use_structured_content
+        self.use_ray_for_tools = use_ray_for_tools
 
     @abc.abstractmethod
     async def connect(self):

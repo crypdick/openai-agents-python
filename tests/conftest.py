@@ -42,10 +42,10 @@ def ensure_openai_api_key():
 def control_ray_backend(monkeypatch):
     """
     Set RAY_BACKEND based on TEST_RAY_BACKEND environment variable.
-    
+
     When TEST_RAY_BACKEND=1: Enable Ray backend for all tests
     Otherwise: Disable Ray backend for all tests
-    
+
     Note: This doesn't affect the module-level imports that happened at startup,
     but it does affect runtime checks and ensures consistency.
     """
@@ -85,12 +85,30 @@ def shutdown_trace_provider():
 
 @pytest.fixture(scope="session", autouse=True)
 def shutdown_ray():
-    """Shutdown Ray at the end of the test session."""
+    """Shutdown Ray at the end of the test session and force kill all Ray processes."""
     yield
-    import ray
-    if ray.is_initialized():
-        ray.shutdown()
 
+    # First try graceful shutdown
+    try:
+        import ray
+
+        if ray.is_initialized():
+            ray.shutdown()
+    except Exception:
+        pass
+
+    # Force stop all Ray processes using ray CLI
+    import subprocess
+
+    try:
+        subprocess.run(
+            ["ray", "stop", "--force", "--grace-period", "0"],
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception:
+        # Ignore errors during cleanup
+        pass
 
 
 @pytest.fixture(autouse=True)

@@ -16,6 +16,10 @@ _current_trace: contextvars.ContextVar["Trace | None"] = contextvars.ContextVar(
     "current_trace", default=None
 )
 
+_remote_span_updates: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "remote_span_updates", default=None
+)
+
 
 class Scope:
     """
@@ -47,3 +51,21 @@ class Scope:
     def reset_current_trace(cls, token: "contextvars.Token[Trace | None]") -> None:
         logger.debug("Resetting current trace")
         _current_trace.reset(token)
+
+    @classmethod
+    def get_remote_span_updates(cls) -> dict[str, Any] | None:
+        return _remote_span_updates.get()
+
+    @classmethod
+    def set_remote_span_updates(
+        cls, updates: dict[str, Any] | None
+    ) -> "contextvars.Token[dict[str, Any] | None]":
+        return _remote_span_updates.set(updates)
+
+    @classmethod
+    def add_remote_span_update(cls, key: str, value: Any) -> None:
+        updates = cls.get_remote_span_updates()
+        if updates is None:
+            updates = {}
+            cls.set_remote_span_updates(updates)
+        updates[key] = value

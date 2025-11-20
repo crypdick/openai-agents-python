@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from agents.setup_ray import use_ray
+from agents.tracing.create import get_current_span
+from agents.tracing.scope import Scope
+from agents.tracing.span_data import FunctionSpanData
 
 from .logger import logger
 from .tool import FunctionTool
@@ -57,6 +60,16 @@ class RayToolError:
         return Exception(f"{self.error_type}: {self.error_message}")
 
 
+@dataclass
+class RayToolResult:
+    """
+    Wrapper for tool result that includes side effects like span updates.
+    """
+
+    output: Any
+    span_updates: dict[str, Any] | None = None
+
+
 class ToolInvocationBackend(ABC):
     """Interface for executing tool calls."""
 
@@ -88,13 +101,20 @@ class _RayToolCallPayload:
     tool_context: ToolContext[Any]
     tool_arguments: str
 
-    async def run(self) -> Any | RayToolError:
+    async def run(self) -> Any | RayToolResult | RayToolError:
         """
         Execute the tool and return result or RayToolError on exception.
         We return errors instead of raising to avoid Ray's verbose stack traces.
         """
         try:
-            return await self.func_tool.on_invoke_tool(self.tool_context, self.tool_arguments)
+            result = await self.func_tool.on_invoke_tool(self.tool_context, self.tool_arguments)
+            
+            # Check for span updates recorded during execution
+            span_updates = Scope.get_remote_span_updates()
+            if span_updates:
+                return RayToolResult(output=result, span_updates=span_updates)
+            
+            return result
         except Exception as e:
             # Capture the clean error information before Ray wraps it
             return RayToolError(
@@ -165,6 +185,19 @@ class RayToolInvocationBackend(ToolInvocationBackend):
             if isinstance(result, RayToolError):
                 # Convert back to exception and raise with clean message
                 raise result.to_exception()
+
+            if isinstance(result, RayToolResult):
+                # Apply span updates if available
+                if result.span_updates:
+                    current_span = get_current_span()
+                    if current_span and isinstance(current_span.span_data, FunctionSpanData):
+                        for key, value in result.span_updates.items():
+                            # Map known keys to span data fields
+                            if key == "mcp_data":
+                                current_span.span_data.mcp_data = value
+                            # Can add other mappings as needed
+                
+                return result.output
 
             return result
         except Exception:

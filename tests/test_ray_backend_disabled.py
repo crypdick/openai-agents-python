@@ -42,6 +42,7 @@ async def test_ray_backend_fallback_when_ray_not_available():
     backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
     tool = MagicMock(spec=FunctionTool)
+    tool.name = "mock_tool"
     context = MagicMock(spec=ToolContext)
 
     result = await backend.invoke(tool, context, "{}")
@@ -59,6 +60,7 @@ async def test_async_backend_direct_invocation():
         return "direct_result"
 
     tool = MagicMock(spec=FunctionTool)
+    tool.name = "mock_tool"
     tool.on_invoke_tool = AsyncMock(side_effect=mock_on_invoke_tool)
 
     context = MagicMock(spec=ToolContext)

@@ -88,6 +88,7 @@ async def test_ray_backend_invoke_fallback_if_ray_unavailable():
         backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
         tool = MagicMock(spec=FunctionTool)
+        tool.name = "mock_tool"
         context = MagicMock(spec=ToolContext)
 
         result = await backend.invoke(tool, context, "{}")
@@ -123,6 +124,7 @@ async def test_ray_backend_invoke_with_resource_args():
             mock_get.return_value = "ray_result"
 
             tool = MagicMock(spec=FunctionTool)
+            tool.name = "mock_tool"
             context = MagicMock(spec=ToolContext)
 
             result = await backend.invoke(tool, context, "{}")
@@ -164,6 +166,7 @@ async def test_ray_backend_serialization_failure_fallback():
         backend._fallback_backend.invoke = AsyncMock(side_effect=mock_invoke)
 
         tool = MagicMock(spec=FunctionTool)
+        tool.name = "mock_tool"
         context = MagicMock(spec=ToolContext)
 
         result = await backend.invoke(tool, context, "{}")

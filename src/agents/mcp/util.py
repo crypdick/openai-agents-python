@@ -13,6 +13,7 @@ from ..run_context import RunContextWrapper
 from ..strict_schema import ensure_strict_json_schema
 from ..tool import FunctionTool, Tool
 from ..tracing import FunctionSpanData, get_current_span, mcp_tools_span
+from ..tracing.scope import Scope
 from ..util._types import MaybeAwaitable
 
 if TYPE_CHECKING:
@@ -238,5 +239,14 @@ class MCPUtil:
                 logger.warning(
                     f"Current span is not a FunctionSpanData, skipping tool output: {current_span}"
                 )
+        else:
+            # If there is no current span, we might be running in a remote worker.
+            # In that case, we record the update in the scope so the caller can pick it up.
+            Scope.add_remote_span_update(
+                "mcp_data",
+                {
+                    "server": server.name,
+                },
+            )
 
         return tool_output

@@ -83,6 +83,16 @@ def shutdown_trace_provider():
     get_trace_provider().shutdown()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def shutdown_ray():
+    """Shutdown Ray at the end of the test session."""
+    yield
+    import ray
+    if ray.is_initialized():
+        ray.shutdown()
+
+
+
 @pytest.fixture(autouse=True)
 def disable_real_model_clients(monkeypatch, request):
     # If the test is marked to allow the method call, don't override it.

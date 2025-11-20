@@ -5,6 +5,9 @@ Ensure Ray tasks can be used as input and output guardrail functions with the de
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,7 +32,44 @@ from agents import (
 from .fake_model import FakeModel
 from .test_responses import get_text_message
 
-pytestmark = pytest.mark.skipif(ray is None, reason="ray is not installed")
+RUN_RAY_GUARDRAIL_TESTS = os.environ.get("RUN_RAY_GUARDRAIL_TESTS") == "1"
+pytestmark = pytest.mark.skipif(
+    (ray is None) or (not RUN_RAY_GUARDRAIL_TESTS),
+    reason="Ray guardrail tests require RUN_RAY_GUARDRAIL_TESTS=1 and ray installed.",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _ensure_local_ray_runtime():
+    """
+    These tests intentionally exercise Ray tasks while the Agents SDK still uses the
+    default (non-Ray) backend. Rather than spawning separate worker processes (which
+    requires packaging the repo and replicating the virtualenv), we rely on Ray's
+    local_mode so that "remote" tasks execute in-process. This keeps the environment
+    identical to the test runner and avoids hanging workers.
+    """
+
+    if ray is None:
+        yield
+        return
+
+    original_runtime_env_dir = os.environ.pop("RAY_RUNTIME_ENV_WORKING_DIR", None)
+    already_running = ray.is_initialized()
+    if not already_running:
+        working_dir_uri = Path(__file__).resolve().parents[1].as_uri()
+        ray.init(
+            local_mode=True,
+            include_dashboard=False,
+            runtime_env={"working_dir": working_dir_uri},
+        )
+
+    try:
+        yield
+    finally:
+        if not already_running and ray.is_initialized():
+            ray.shutdown()
+        if original_runtime_env_dir is not None:
+            os.environ["RAY_RUNTIME_ENV_WORKING_DIR"] = original_runtime_env_dir
 
 
 @pytest.mark.asyncio
